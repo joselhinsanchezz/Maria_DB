@@ -1,119 +1,107 @@
 const express = require("express");
-const sqlite3 = require("sqlite3").verbose();
-const bodyParser = require("body-parser");
+const mariadb = require("mariadb");
+
+const pool = mariadb.createPool({
+  host: "localhost",
+  user: "root",
+  password: "1234",
+  database: "planning",
+  connectionLimit: 5,
+});
 
 const app = express();
 const port = 3000;
 
-// Middleware para parsear JSON
-app.use(bodyParser.json());
+app.use(express.json());
 
-// Configuración de la base de datos SQLite
-const db = new sqlite3.Database(":memory:", (err) => {
-  if (err) {
-    console.error("Error al conectar a la base de datos:", err.message);
-    return;
+app.get("/", (req, res) => {
+  res.send("<h1>Bienvenid@ al servidor</h1>");
+});
+
+app.get("/todo", async (req, res) => {
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    const rows = await conn.query(
+      "SELECT id, name, description, created_at, updated_at, status FROM todo"
+    );
+
+    res.json(rows);
+  } catch (error) {
+    res.status(500).json({ message: "Se rompió el servidor" });
+  } finally {
+    if (conn) conn.release(); //release to pool
   }
-  console.log("Conectado a la base de datos SQLite en memoria.");
 });
 
-// Crear la tabla "tasks"
-db.run(`
-  CREATE TABLE tasks (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    description TEXT,
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    status TEXT DEFAULT 'pending'
-  )
-`);
+app.get("/todo/:id", async (req, res) => {
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    const rows = await conn.query(
+      "SELECT id, name, description, created_at, updated_at, status FROM todo WHERE id=?",
+      [req.params.id]
+    );
 
-// **RUTAS**
-
-// Listar todas las tareas
-app.get("/tasks", (req, res) => {
-  db.all("SELECT * FROM tasks", [], (err, rows) => {
-    if (err) {
-      res.status(500).json({ error: err.message });
-    } else {
-      res.json(rows);
-    }
-  });
+    res.json(rows[0]);
+  } catch (error) {
+    res.status(500).json({ message: "Se rompió el servidor" });
+  } finally {
+    if (conn) conn.release(); //release to pool
+  }
 });
 
-// Obtener una tarea por su ID
-app.get("/tasks/:id", (req, res) => {
-  const id = req.params.id;
-  db.get("SELECT * FROM tasks WHERE id = ?", [id], (err, row) => {
-    if (err) {
-      res.status(500).json({ error: err.message });
-    } else if (!row) {
-      res.status(404).json({ error: "Tarea no encontrada" });
-    } else {
-      res.json(row);
-    }
-  });
+app.post("/todo", async (req, res) => {
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    const response = await conn.query(
+      `INSERT INTO todo(name, description, created_at, updated_at, status) VALUE(?, ?, ?, ?, ?)`,
+      [req.body.name, req.body.description, req.body.created_at, req.body.updated_at, req.body.status]
+    );
+
+    res.json({ id: parseInt(response.insertId), ...req.body });
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({ message: "Se rompió el servidor" });
+  } finally {
+    if (conn) conn.release(); //release to pool
+  }
 });
 
-// Crear una nueva tarea
-app.post("/tasks", (req, res) => {
-  const { name, description, status } = req.body;
-  const query = `
-    INSERT INTO tasks (name, description, status)
-    VALUES (?, ?, ?)
-  `;
-  const values = [name, description || "", status || "pending"];
+app.put("/todo/:id", async (req, res) => {
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    const response = await conn.query(
+      `UPDATE todo SET name=?, description=?, created_at=?, updated_at=?, status=? WHERE id=?`,
+      [req.body.name, req.body.description, req.body.created_at, req.body.updated_at, req.body.status, req.params.id]
+    );
 
-  db.run(query, values, function (err) {
-    if (err) {
-      res.status(500).json({ error: err.message });
-    } else {
-      res.status(201).json({ id: this.lastID });
-    }
-  });
+    res.json({ id: req.params.id, ...req.body });
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({ message: "Se rompió el servidor" });
+  } finally {
+    if (conn) conn.release(); //release to pool
+  }
 });
 
-// Actualizar una tarea existente
-app.put("/tasks/:id", (req, res) => {
-  const id = req.params.id;
-  const { name, description, status } = req.body;
-  const query = `
-    UPDATE tasks
-    SET name = COALESCE(?, name),
-        description = COALESCE(?, description),
-        status = COALESCE(?, status),
-        updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `;
-  const values = [name, description, status, id];
-
-  db.run(query, values, function (err) {
-    if (err) {
-      res.status(500).json({ error: err.message });
-    } else if (this.changes === 0) {
-      res.status(404).json({ error: "Tarea no encontrada" });
-    } else {
-      res.json({ message: "Tarea actualizada exitosamente" });
-    }
-  });
+app.delete("/todo/:id", async (req, res) => {
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    const rows = await conn.query("DELETE FROM todo WHERE id=?", [
+      req.params.id,
+    ]);
+    res.json({ message: "Elemento eliminado correctamente" });
+  } catch (error) {
+    res.status(500).json({ message: "Se rompió el servidor" });
+  } finally {
+    if (conn) conn.release(); //release to pool
+  }
 });
 
-// Eliminar una tarea
-app.delete("/tasks/:id", (req, res) => {
-  const id = req.params.id;
-  db.run("DELETE FROM tasks WHERE id = ?", [id], function (err) {
-    if (err) {
-      res.status(500).json({ error: err.message });
-    } else if (this.changes === 0) {
-      res.status(404).json({ error: "Tarea no encontrada" });
-    } else {
-      res.json({ message: "Tarea eliminada exitosamente" });
-    }
-  });
-});
-
-// Iniciar el servidor
 app.listen(port, () => {
   console.log(`Servidor corriendo en http://localhost:${port}`);
 });

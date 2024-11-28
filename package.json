@@ -1,0 +1,8 @@
+{
+  "dependencies": {
+    "body-parser": "^1.20.3",
+    "express": "^4.21.1",
+    "mariadb": "^3.4.0",
+    "sqlite3": "^5.1.7"
+  }
+}
